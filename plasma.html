@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plasma Balls Meditation Visualization</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background-color: #000;
+        }
+        canvas { 
+            width: 100vw; 
+            height: 100vh; 
+            display: block; 
+        }
+    </style>
+</head>
+<body>
+    <canvas id="glCanvas"></canvas>
+    <script>
+        // Get query parameters from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const speed = parseFloat(urlParams.get('speed') || 0.5);
+        const intensity = parseFloat(urlParams.get('intensity') || 0.8);
+        
+        // Initialize WebGL context
+        const canvas = document.getElementById('glCanvas');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        const gl = canvas.getContext('webgl');
+
+        // Vertex shader program
+        const vsSource = `
+            attribute vec4 aVertexPosition;
+            varying vec2 vUV;
+            void main() {
+                gl_Position = aVertexPosition;
+                vUV = aVertexPosition.xy * 0.5 + 0.5;
+            }
+        `;
+
+        // Fragment shader program - plasma balls visualization
+        const fsSource = `
+            precision highp float;
+            varying vec2 vUV;
+            uniform float uTime;
+            uniform float uSpeed;
+            uniform float uIntensity;
+            uniform vec2 uResolution;
+            
+            // Function to create a single plasma ball
+            vec3 plasmaBall(vec2 uv, vec2 center, float radius, float time, vec3 color) {
+                float dist = distance(uv, center);
+                float brightness = 0.0;
+                
+                // Inner glow
+                brightness += 0.5 * smoothstep(radius, 0.0, dist);
+                
+                // Plasma effect
+                float angle = atan(uv.y - center.y, uv.x - center.x);
+                brightness += 0.2 * sin(dist * 15.0 - time * 2.0);
+                brightness += 0.15 * sin(angle * 8.0 + time * 1.5);
+                brightness += 0.075 * sin(dist * 20.0 + angle * 5.0 - time * 3.0);
+                
+                // Outer pulse
+                brightness += 0.1 * sin(dist * 10.0 - time) * smoothstep(radius * 1.5, radius * 0.8, dist);
+                
+                // Apply falloff
+                float falloff = smoothstep(radius * 1.2, radius * 0.2, dist);
+                brightness *= falloff;
+                
+                return color * brightness * uIntensity;
+            }
+            
+            void main() {
+                vec2 uv = vUV;
+                float aspectRatio = uResolution.x / uResolution.y;
+                uv.x *= aspectRatio;
+                
+                float t = uTime * uSpeed;
+                
+                // Define 5 plasma ball centers with movement
+                vec2 center1 = vec2(0.3 * aspectRatio + sin(t * 0.2) * 0.05, 0.3 + cos(t * 0.3) * 0.05);
+                vec2 center2 = vec2(0.7 * aspectRatio + cos(t * 0.25) * 0.06, 0.3 + sin(t * 0.35) * 0.06);
+                vec2 center3 = vec2(0.5 * aspectRatio + sin(t * 0.15) * 0.07, 0.6 + cos(t * 0.2) * 0.07);
+                vec2 center4 = vec2(0.25 * aspectRatio + cos(t * 0.3) * 0.04, 0.75 + sin(t * 0.25) * 0.04);
+                vec2 center5 = vec2(0.75 * aspectRatio + sin(t * 0.35) * 0.05, 0.75 + cos(t * 0.4) * 0.05);
+                
+                // Define colors for each plasma ball
+                vec3 color1 = vec3(0.3, 0.1, 0.8); // Purple
+                vec3 color2 = vec3(0.1, 0.5, 0.9); // Blue
+                vec3 color3 = vec3(0.0, 0.7, 0.7); // Teal
+                vec3 color4 = vec3(0.5, 0.2, 0.9); // Violet
+                vec3 color5 = vec3(0.0, 0.4, 0.8); // Deep Blue
+                
+                // Render each plasma ball
+                vec3 col = vec3(0.0);
+                col += plasmaBall(uv, center1, 0.15, t, color1);
+                col += plasmaBall(uv, center2, 0.15, t * 1.1, color2);
+                col += plasmaBall(uv, center3, 0.17, t * 0.9, color3);
+                col += plasmaBall(uv, center4, 0.12, t * 1.2, color4);
+                col += plasmaBall(uv, center5, 0.14, t * 0.85, color5);
+                
+                // Add subtle background glow
+                float bgNoise = sin(uv.x * 5.0 + t) * sin(uv.y * 4.0 - t * 0.8) * 0.1 + 0.1;
+                vec3 bgColor = mix(vec3(0.0, 0.05, 0.1), vec3(0.05, 0.1, 0.2), bgNoise);
+                
+                // Mix background and plasma balls
+                col = col + bgColor * (0.5 - length(col));
+                
+                // Output final color
+                gl_FragColor = vec4(col, 1.0);
+            }
+        `;
+
+        // Initialize shader program
+        function initShaderProgram(gl, vsSource, fsSource) {
+            const vertexShader = loadShader(gl, gl.VERTEX_SHADER, vsSource);
+            const fragmentShader = loadShader(gl, gl.FRAGMENT_SHADER, fsSource);
+
+            // Create the shader program
+            const shaderProgram = gl.createProgram();
+            gl.attachShader(shaderProgram, vertexShader);
+            gl.attachShader(shaderProgram, fragmentShader);
+            gl.linkProgram(shaderProgram);
+
+            // If creating the shader program failed, alert
+            if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+                alert('Unable to initialize the shader program: ' + gl.getProgramInfoLog(shaderProgram));
+                return null;
+            }
+
+            return shaderProgram;
+        }
+
+        // Load a shader
+        function loadShader(gl, type, source) {
+            const shader = gl.createShader(type);
+
+            // Send the source to the shader object
+            gl.shaderSource(shader, source);
+
+            // Compile the shader program
+            gl.compileShader(shader);
+
+            // See if it compiled successfully
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                alert('An error occurred compiling the shaders: ' + gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+
+            return shader;
+        }
+
+        // Initialize buffers for a full-screen quad
+        function initBuffers(gl) {
+            const positionBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+            const positions = [
+                -1.0, -1.0,
+                 1.0, -1.0,
+                -1.0,  1.0,
+                 1.0,  1.0,
+            ];
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+            return { position: positionBuffer };
+        }
+
+        // Draw the scene
+        function drawScene(gl, programInfo, buffers, time) {
+            gl.clearColor(0.0, 0.0, 0.0, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+
+            // Use the shader program
+            gl.useProgram(programInfo.program);
+
+            // Set position attribute
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
+            gl.vertexAttribPointer(
+                programInfo.attribLocations.vertexPosition,
+                2, // 2 components per vertex
+                gl.FLOAT,
+                false,
+                0,
+                0
+            );
+            gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
+
+            // Set uniforms
+            gl.uniform1f(programInfo.uniformLocations.time, time);
+            gl.uniform1f(programInfo.uniformLocations.speed, speed);
+            gl.uniform1f(programInfo.uniformLocations.intensity, intensity);
+            gl.uniform2f(programInfo.uniformLocations.resolution, canvas.width, canvas.height);
+
+            // Draw
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        }
+
+        // Main initialization
+        function main() {
+            if (!gl) {
+                alert("WebGL not supported!");
+                return;
+            }
+
+            // Initialize shaders
+            const shaderProgram = initShaderProgram(gl, vsSource, fsSource);
+            if (!shaderProgram) {
+                return;
+            }
+
+            // Collect all the info needed to use the shader program
+            const programInfo = {
+                program: shaderProgram,
+                attribLocations: {
+                    vertexPosition: gl.getAttribLocation(shaderProgram, 'aVertexPosition'),
+                },
+                uniformLocations: {
+                    time: gl.getUniformLocation(shaderProgram, 'uTime'),
+                    speed: gl.getUniformLocation(shaderProgram, 'uSpeed'),
+                    intensity: gl.getUniformLocation(shaderProgram, 'uIntensity'),
+                    resolution: gl.getUniformLocation(shaderProgram, 'uResolution'),
+                },
+            };
+
+            // Initialize buffers
+            const buffers = initBuffers(gl);
+            
+            let then = 0;
+            // Draw the scene repeatedly
+            function render(now) {
+                now *= 0.001;  // convert to seconds
+                const deltaTime = now - then;
+                then = now;
+
+                drawScene(gl, programInfo, buffers, now);
+                requestAnimationFrame(render);
+            }
+            requestAnimationFrame(render);
+            
+            // Handle resize
+            function handleResize() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                gl.viewport(0, 0, canvas.width, canvas.height);
+            }
+            
+            window.addEventListener('resize', handleResize);
+            handleResize();
+        }
+
+        // Start the application
+        main();
+    </script>
+</body>
+</html>
